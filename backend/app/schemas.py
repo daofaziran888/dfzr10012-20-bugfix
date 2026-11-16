@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Generic, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 T = TypeVar("T")
 
@@ -22,10 +22,28 @@ class ActionResult(BaseModel):
 
 
 class EntryPayload(BaseModel):
-    """登记或修改一条业务记录时提交的字段集合。"""
+    """登记或修改一条业务记录时提交的字段集合。
+
+    同时接受 ``{"values": {...}}`` 和扁平的 ``{"字段": ...}`` 两种写法：前端页面
+    一直提交扁平结构，如果这里只认 values，字段类型和格式版本会在入口处被丢掉。
+    """
 
     values: dict[str, Any] = Field(default_factory=dict)
     remark: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_flat_payload(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        if "values" in data:
+            merged = dict(data["values"] or {})
+            for key, value in data.items():
+                if key not in {"values", "remark"}:
+                    merged.setdefault(key, value)
+            return {**data, "values": merged}
+        return {"values": {key: value for key, value in data.items() if key != "remark"},
+                "remark": data.get("remark")}
 
 
 

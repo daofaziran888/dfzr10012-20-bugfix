@@ -30,6 +30,20 @@ def list_entries(
     return PageResult(items=items, total=total, page=page, size=size)
 
 
+# 静态路径必须排在 /{entry_id} 之前，否则 "report"/"export" 会被当成编号解析。
+@router.get("/report")
+def report() -> dict[str, Any]:
+    """发布报告：字段名称、字段类型、格式版本和输出契约统一取自最新快照。"""
+    return service.report()
+
+
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出流数据格式定义清单：返回当前过滤条件下的全量数据。"""
+    items, total = service.list_entries(page=1, size=10000)
+    return {"module": "schema", "total": total, "items": items}
+
+
 @router.get("/{entry_id}", response_model=dict)
 def get_entry(entry_id: int) -> dict:
     """读取单条格式定义明细；不存在时给出可读的错误说明。"""
@@ -37,6 +51,20 @@ def get_entry(entry_id: int) -> dict:
     if entry is None:
         raise HTTPException(status_code=404, detail=f"格式定义 {entry_id} 不存在或已归档")
     return entry
+
+
+@router.get("/{entry_id}/snapshots", response_model=dict)
+def list_snapshots(entry_id: int) -> dict[str, Any]:
+    """返回该格式定义的字段版本快照台账，历史版本保持可追溯。"""
+    entry = service.get_entry(entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"格式定义 {entry_id} 不存在或已归档")
+    code = str(entry.get("定义编号") or "")
+    return {
+        "定义编号": code,
+        "current": service.latest_snapshot(code),
+        "items": service.list_snapshots(code),
+    }
 
 
 @router.post("", response_model=ActionResult)
@@ -48,18 +76,25 @@ def create_entry(payload: EntryPayload) -> ActionResult:
     return ActionResult(ok=True, message="格式定义已登记", entry=entry)
 
 
-@router.post("/{entry_id}/actions", response_model=ActionResult)
-def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
-    """对单条格式定义执行发布格式、废弃格式、冻结格式；不允许的动作会被拦下并说明原因。"""
-    action = str(payload.values.get("action") or "").strip()
-    entry, message = service.run_action(entry_id, action)
+@router.post("/{entry_id}/revisions", response_model=ActionResult)
+def publish_revision(entry_id: int, payload: EntryPayload) -> ActionResult:
+    """提交一次字段修订：字段名称、字段类型、格式版本一次写齐并落快照。"""
+    entry, message, snapshot = service.publish_revision(entry_id, payload.values)
     if entry is None:
         return ActionResult(ok=False, message=message)
+    return ActionResult(ok=True, message=message, entry={**entry, "当前快照": snapshot})
+
+
+@router.post("/{entry_id}/actions", response_model=ActionResult)
+def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
+    """对单条格式定义执行发布格式、废弃格式、冻结格式；不允许的动作会被拦下并说明原因。
+
+    「发布格式」会校验本次提交的字段类型与格式版本并写入字段版本快照，重复提交
+    同一份修订只生效一次。
+    """
+    action = str(payload.values.get("action") or "").strip()
+    entry, message, snapshot = service.run_action(entry_id, action, payload.values)
+    if entry is None:
+        return ActionResult(ok=False, message=message)
+    entry["当前快照"] = snapshot
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出流数据格式定义清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "schema", "total": total, "items": items}

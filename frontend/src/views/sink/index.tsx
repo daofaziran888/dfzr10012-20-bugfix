@@ -11,6 +11,7 @@ const columns = [
   "批处理大小",
   "刷新间隔",
   "重试策略",
+  "格式版本",
   "配置状态"
 ]
 const actions = [
@@ -45,6 +46,7 @@ export default function SinkView() {
   const [rows, setRows] = useState<Row[]>([])
   const [total, setTotal] = useState(0)
   const [errorMessage, setErrorMessage] = useState('')
+  const [contractMessage, setContractMessage] = useState('')
   const [filters, setFilters] = useState<Record<string, string>>({})
   const filterFields = useMemo(() => columns.slice(0, 3), [])
 
@@ -57,8 +59,16 @@ export default function SinkView() {
         throw new Error('输出配置列表读取失败')
       }
       const payload = await response.json()
-      setRows(payload.items ?? [])
+      const items: Row[] = payload.items ?? []
+      setRows(items)
       setTotal(payload.total ?? 0)
+      // 消费侧写回自身状态：展示的契约版本直接取自格式定义字段版本快照。
+      const withContract = items.find((row) => row["格式版本"])
+      setContractMessage(
+        withContract
+          ? `当前字段契约：${withContract["配置编号"]} / ${withContract["字段名称"] ?? '—'}:${withContract["字段类型"] ?? '—'} / ${withContract["格式版本"]}`
+          : '',
+      )
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '流数据输出端列表读取失败')
     }
@@ -154,7 +164,7 @@ export default function SinkView() {
       </table>
 
       <footer className="page-foot">
-        <span>共 {total} 条流数据输出端记录</span>
+        <span>共 {total} 条流数据输出端记录{contractMessage ? `，${contractMessage}` : ''}</span>
         {errorMessage && <span className="error-text">{errorMessage}</span>}
       </footer>
     </section>
